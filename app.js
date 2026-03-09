@@ -378,7 +378,7 @@ function renderDeparture(dep) {
 
   let timeHtml;
   if (isNow) {
-    timeHtml = `<span class="time now">Nu</span><span class="time"${timeColor}>${depClock}</span>`;
+    timeHtml = `<span class="time now">Nu</span><span class="time now">${depClock}</span>`;
   } else {
     timeHtml = `<span class="time-min"${timeColor}>${Math.round(mins)} min</span><span class="time"${timeColor}>${depClock}</span>`;
   }
@@ -633,12 +633,22 @@ async function refresh() {
     });
   });
 
-  // Show OK button when typing line number
+  // Show OK button when typing line number + handle Enter key
   departuresEl.querySelectorAll('.line-input').forEach((input) => {
     const idx = input.dataset.index;
     const btn = departuresEl.querySelector(`.line-ok[data-index="${idx}"]`);
     input.addEventListener('input', () => {
       btn?.classList.toggle('hidden', !input.value.trim());
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const val = input.value.trim();
+        if (!val || !allSLLines) return;
+        const match = allSLLines.find((l) => l.designation === val);
+        if (!match) return;
+        applyLineMatch(parseInt(idx, 10), match);
+      }
     });
   });
 
@@ -664,10 +674,12 @@ async function refresh() {
     });
   });
 
-  // Attach clear button handlers — remove the line entirely
+  // Attach clear button handlers — remove the line with confirmation
   departuresEl.querySelectorAll('.line-clear').forEach((el) => {
     el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.index, 10);
+      const name = config.lines[idx].lineName || 'denna linje';
+      if (!confirm(`Ta bort ${name}?`)) return;
       config.lines.splice(idx, 1);
       if (config.lines.length === 0) config.lines.push({ ...EMPTY_LINE });
       saveConfig(config);
