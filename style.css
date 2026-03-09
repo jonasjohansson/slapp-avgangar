@@ -146,6 +146,10 @@ main {
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+#route-header-text {
+  cursor: pointer;
+}
+
 .route-journey {
   padding: 10px 14px;
 }
