@@ -38,7 +38,6 @@ const departuresEl = document.getElementById('departures');
 const routeCardEl = document.getElementById('route-card');
 const updatedEl = document.getElementById('updated');
 
-let userPosition = null;
 let allSLLines = null; // fetched once on load
 
 function esc(str) {
@@ -48,18 +47,6 @@ function esc(str) {
 }
 
 function pad(n) { return String(n).padStart(2, '0'); }
-
-const DESTINATION_NAMES = {
-  'Högsätra Larsberg': 'Larsberg',
-  'Gåshaga brygga': 'Gåshaga',
-  'Käppala': 'Gåshaga',
-  'Gåshaga Brygga': 'Gåshaga',
-};
-
-function cleanDestination(name) {
-  if (DESTINATION_NAMES[name]) return DESTINATION_NAMES[name];
-  return name.replace(/^(Stockholm|Lidingö|Nacka|Solna|Sundbyberg|Danderyd),\s*/i, '');
-}
 
 /* ---- Fetch all SL lines (once) ---- */
 
@@ -91,8 +78,6 @@ const TRANSPORT_MODE_COLORS = {
   SHIP: '#00a4b7',
   TRAIN: '#f47d30',
 };
-
-const TRANSPORT_MODE_ORDER = ['METRO', 'TRAM', 'BUS', 'SHIP', 'TRAIN'];
 
 /* ---- Journey Planner API ---- */
 
@@ -331,60 +316,38 @@ function minutesUntil(dep) {
   return 0;
 }
 
-async function fetchSiteDepartures(siteId, lineId, stopName, applyDestOverride) {
+async function fetchSiteDepartures(siteId, lineId, stopName) {
   const res = await fetch(`${API_BASE}/${siteId}/departures`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
-  return (data.departures || []).filter((dep) =>
+  const deps = (data.departures || []).filter((dep) =>
     dep.journey?.state !== 'CANCELLED' && dep.state !== 'CANCELLED' &&
     dep.line?.id === lineId &&
     minutesUntil(dep) <= MAX_MINUTES
-  ).map((dep) => {
-    const result = { ...dep, _stop: stopName };
-    if (applyDestOverride && DESTINATION_NAMES[dep.destination]) {
-      result.destination = DESTINATION_NAMES[dep.destination];
-    }
-    return result;
-  });
+  ).map((dep) => ({ ...dep, _stop: stopName }));
+
+  return deps;
 }
 
 async function fetchLine(line) {
-  if (!line.lineId || !line.from) return { line, departures: [] };
+  if (!line.lineId || !line.from || !line.to) return { line, departures: [] };
 
-  // Fetch departures from the selected station
-  const fromDeps = await fetchSiteDepartures(line.from.siteId, line.lineId, line.from.name, false);
+  const [fromResult, toResult] = await Promise.allSettled([
+    fetchSiteDepartures(line.from.siteId, line.lineId, line.from.name),
+    fetchSiteDepartures(line.to.siteId, line.lineId, line.to.name),
+  ]);
 
-  // Auto-detect the other end: find the most common destination
-  let returnDeps = [];
-  if (fromDeps.length) {
-    const destCounts = {};
-    for (const d of fromDeps) {
-      const dest = d.destination;
-      destCounts[dest] = (destCounts[dest] || 0) + 1;
-    }
-    const topDest = Object.entries(destCounts).sort((a, b) => b[1] - a[1])[0][0];
-    // Look up siteId for that destination
-    try {
-      const res = await fetch(
-        `${JP_BASE}/stop-finder?name_sf=${encodeURIComponent(topDest)}&type_sf=any&any_obj_filter_sf=2`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const loc = (data.locations || [])[0];
-        const rawId = parseInt(loc?.properties?.stopId || '', 10);
-        const siteId = rawId > 100000 ? rawId % 100000 : rawId;
-        if (siteId && siteId !== line.from.siteId) {
-          returnDeps = await fetchSiteDepartures(siteId, line.lineId, loc.name, false);
-        }
-      }
-    } catch (e) {
-      // Ignore — just show one direction
-    }
-  }
+  // Keep departures separate per station, take top 3 from each
+  const fromDeps = (fromResult.status === 'fulfilled' ? fromResult.value : []).slice(0, 3);
+  const toDeps = (toResult.status === 'fulfilled' ? toResult.value : []).slice(0, 3);
 
-  const allDeps = [...fromDeps, ...returnDeps];
-  allDeps.sort((a, b) => minutesUntil(a) - minutesUntil(b));
-  return { line, departures: allDeps.slice(0, MAX_DEPARTURES) };
+  // Tag with override destination
+  const toName = cleanStopName(line.to.name);
+  const fromName = cleanStopName(line.from.name);
+  for (const d of fromDeps) d._destOverride = toName;
+  for (const d of toDeps) d._destOverride = fromName;
+
+  return { line, departures: [...fromDeps, ...toDeps] };
 }
 
 function cleanStopName(name) {
@@ -393,13 +356,37 @@ function cleanStopName(name) {
 
 function renderDeparture(dep) {
   const isNow = dep.display === 'Nu';
-  const dest = cleanDestination(dep.destination);
+  const dest = dep._destOverride || cleanStopName(dep.destination);
   const stop = dep._stop ? cleanStopName(dep._stop) : '';
   const route = stop ? `${stop}–${dest}` : dest;
+
+  // Calculate departure clock time and minutes
+  const mins = minutesUntil(dep);
+  let depClock;
+  const timeMatch = dep.display.match(/^(\d{1,2}):(\d{2})$/);
+  if (timeMatch) {
+    depClock = dep.display;
+  } else {
+    const now = new Date();
+    const clock = new Date(now.getTime() + mins * 60000);
+    depClock = `${pad(clock.getHours())}:${pad(clock.getMinutes())}`;
+  }
+
+  // Detect delay: expected vs scheduled
+  const isDelayed = dep.expected && dep.scheduled && new Date(dep.expected) > new Date(dep.scheduled);
+  const timeColor = isDelayed ? ' style="color:#f59e0b"' : '';
+
+  let timeHtml;
+  if (isNow) {
+    timeHtml = `<span class="time now"${timeColor}>Nu</span><span class="time"${timeColor}>${depClock}</span>`;
+  } else {
+    timeHtml = `<span class="time-min"${timeColor}>${Math.round(mins)} min</span><span class="time"${timeColor}>${depClock}</span>`;
+  }
+
   return `
     <div class="departure-row">
       <span class="destination">${esc(route)}</span>
-      <span class="time${isNow ? ' now' : ''}">${esc(dep.display)}</span>
+      ${timeHtml}
     </div>`;
 }
 
@@ -411,25 +398,43 @@ function renderLine({ line, departures }, index) {
   } else if (!departures.length) {
     rows = '<div class="no-departures">Inga avgångar</div>';
   } else {
-    // Group by direction/destination
+    // Group by departure station
     const grouped = {};
     for (const dep of departures) {
-      const dest = cleanDestination(dep.destination);
-      if (!grouped[dest]) grouped[dest] = [];
-      grouped[dest].push(dep);
+      const stop = dep._stop ? cleanStopName(dep._stop) : '';
+      if (!grouped[stop]) grouped[stop] = [];
+      grouped[stop].push(dep);
     }
-    const dirs = Object.keys(grouped);
-    if (dirs.length > 1) {
-      rows = dirs.map((dest) =>
-        `<div class="direction-header">${esc(dest)}</div>` +
-        grouped[dest].map(renderDeparture).join('')
+    const stops = Object.keys(grouped);
+    if (stops.length > 1) {
+      rows = stops.map((stop) =>
+        `<div class="direction-header">${esc(stop)}</div>` +
+        grouped[stop].map(renderDeparture).join('')
       ).join('');
     } else {
       rows = departures.map(renderDeparture).join('');
     }
   }
 
-  const fromName = line.from?.name || 'Välj hållplats';
+  // Collect unique deviation/disruption messages
+  const deviationMessages = [];
+  const seenMessages = new Set();
+  for (const dep of departures) {
+    const devs = dep.deviations || [];
+    for (const dev of devs) {
+      const msg = dev.message || dev.header || '';
+      if (msg && !seenMessages.has(msg)) {
+        seenMessages.add(msg);
+        deviationMessages.push(msg);
+      }
+    }
+  }
+  const deviationsHtml = deviationMessages.length
+    ? `<div class="deviation-banner">${deviationMessages.map((m) => esc(m)).join('<br>')}</div>`
+    : '';
+
+  const fromName = line.from?.name ? cleanStopName(line.from.name) : 'Från';
+  const toName = line.to?.name ? cleanStopName(line.to.name) : 'Till';
   const hasLine = !!line.lineId;
 
   return `
@@ -440,34 +445,15 @@ function renderLine({ line, departures }, index) {
              ${line.url ? `<a href="${line.url}" target="_blank" class="timetable-link">(PDF)</a>` : ''}
              <span class="header-sep">·</span>
              <span class="station-pick" data-index="${index}" data-field="from">${esc(fromName)}</span>
+             <span class="header-sep">·</span>
+             <span class="station-pick" data-index="${index}" data-field="to">${esc(toName)}</span>
              <span class="line-clear" data-index="${index}">&times;</span>`
           : `<input class="line-input" data-index="${index}" type="text" inputmode="numeric" placeholder="Lägg till linje…" maxlength="4" /><span class="line-ok hidden" data-index="${index}">OK</span>`
         }
       </div>
+      ${deviationsHtml}
       ${rows}
     </section>`;
-}
-
-/* ---- GPS ---- */
-
-function distanceMeters(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function updateGPS() {
-  if (!navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(
-    (pos) => { userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
-    () => { userPosition = null; },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
-  );
 }
 
 /* ---- Line selection (inline input) ---- */
@@ -589,7 +575,6 @@ function updateTimestamp() {
 
 /* ---- Main loop ---- */
 
-updateGPS();
 fetchAllLines();
 
 let refreshing = false;
@@ -597,7 +582,6 @@ let refreshing = false;
 async function refresh() {
   if (refreshing) return;
   refreshing = true;
-  updateGPS();
   const [, ...lineResults] = await Promise.allSettled([
     refreshRoute(),
     ...config.lines.map(fetchLine),
@@ -617,7 +601,7 @@ async function refresh() {
   });
 
   // Add "add line" bar if under max
-  const allConfigured = config.lines.every((l) => l.lineId && l.from);
+  const allConfigured = config.lines.every((l) => l.lineId && l.from && l.to);
   if (config.lines.length < MAX_LINES) {
     const disabled = !allConfigured;
     html.push(`
@@ -679,7 +663,6 @@ async function refresh() {
       showStationSearch(idx, field);
     });
   });
-
 
   // Attach clear button handlers — remove the line entirely
   departuresEl.querySelectorAll('.line-clear').forEach((el) => {

@@ -75,14 +75,6 @@ main {
   gap: 8px;
 }
 
-.stop-header .line-badge {
-  min-width: auto;
-  padding: 0;
-  font-size: 0.85rem;
-  border-radius: 0;
-  background: none !important;
-}
-
 .add-line-section {
   background: transparent;
   border: 1px dashed rgba(255, 255, 255, 0.15);
@@ -127,17 +119,6 @@ main {
   background: rgba(255, 255, 255, 0.03);
 }
 
-.line-badge {
-  min-width: 36px;
-  padding: 2px 8px;
-  text-align: center;
-  font-weight: 700;
-  font-size: 0.8rem;
-  color: #fff;
-  border-radius: 6px;
-  flex-shrink: 0;
-}
-
 .destination {
   flex: 1;
   font-size: 0.85rem;
@@ -153,6 +134,14 @@ main {
   white-space: nowrap;
   color: #e8e8f0;
   flex-shrink: 0;
+}
+
+.time-min {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: #e8e8f0;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
 
 .time.now {
@@ -174,11 +163,13 @@ main {
   font-size: 0.85rem;
 }
 
-.error-message {
-  text-align: center;
-  color: #6b6b80;
-  padding: 32px 16px;
-  font-size: 0.85rem;
+.deviation-banner {
+  padding: 6px 14px;
+  font-size: 0.75rem;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.15);
+  line-height: 1.4;
 }
 
 /* Route card */
@@ -193,17 +184,6 @@ main {
   border-radius: 12px;
   margin-bottom: 12px;
   overflow: hidden;
-}
-
-.route-header {
-  font-weight: 700;
-  font-size: 0.9rem;
-  padding: 12px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-#route-header-text {
-  cursor: pointer;
 }
 
 .route-journey {
@@ -313,7 +293,7 @@ main {
 }
 
 .line-ok.hidden {
-  display: none;
+  visibility: hidden;
 }
 
 .station-pick {
@@ -325,17 +305,6 @@ main {
 .station-pick:hover {
   opacity: 1;
   text-decoration: underline;
-}
-
-.station-add {
-  cursor: pointer;
-  opacity: 0.4;
-  font-size: 0.85rem;
-  margin-left: 4px;
-}
-
-.station-add:hover {
-  opacity: 1;
 }
 
 .header-sep {
@@ -428,16 +397,6 @@ main {
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* Dimming (kept for GPS) */
-.stop-section.dimmed {
-  opacity: 0.35;
-  transition: opacity 0.3s ease;
-}
-
-.stop-section:not(.dimmed) {
-  transition: opacity 0.3s ease;
-}
-
 /* Tablet+ */
 @media (min-width: 600px) {
   main {
@@ -450,7 +409,6 @@ main {
     padding: 24px 24px 0;
   }
 
-
   .departure-row {
     padding: 10px 18px;
   }
@@ -461,11 +419,6 @@ main {
 
   .time {
     font-size: 0.95rem;
-  }
-
-  .route-header {
-    font-size: 1rem;
-    padding: 14px 18px;
   }
 
   .route-journey {
