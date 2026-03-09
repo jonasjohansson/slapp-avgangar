@@ -657,19 +657,25 @@ async function refresh() {
     input.addEventListener('input', () => {
       btn?.classList.toggle('hidden', !input.value.trim());
     });
+    function submitLine() {
+      const val = input.value.trim();
+      if (!val || !allSLLines) return;
+      const match = allSLLines.find((l) => l.designation === val);
+      if (!match) {
+        input.classList.add('input-error');
+        setTimeout(() => input.classList.remove('input-error'), 600);
+        return;
+      }
+      applyLineMatch(parseInt(idx, 10), match);
+    }
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        const val = input.value.trim();
-        if (!val || !allSLLines) return;
-        const match = allSLLines.find((l) => l.designation === val);
-        if (!match) {
-          input.classList.add('input-error');
-          setTimeout(() => input.classList.remove('input-error'), 600);
-          return;
-        }
-        applyLineMatch(parseInt(idx, 10), match);
+        submitLine();
       }
+    });
+    input.addEventListener('blur', () => {
+      if (input.value.trim()) submitLine();
     });
   });
 
