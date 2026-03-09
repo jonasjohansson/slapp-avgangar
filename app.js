@@ -1,7 +1,7 @@
 /* ---- Config ---- */
 
 // Lines: each is a card showing departures for one line from one or more stops
-const LINES = [
+const DEFAULT_LINES = [
   {
     name: '206',
     color: '#1e6bc9',
@@ -29,6 +29,25 @@ const LINES = [
     ],
   },
 ];
+
+const DEFAULT_ROUTE = {
+  origin: 'Åsögatan 122',
+  destination: 'Larsbergsvägen 27',
+};
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem('slapp-config');
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* ignore */ }
+  return { lines: DEFAULT_LINES, route: DEFAULT_ROUTE };
+}
+
+function saveConfig(config) {
+  localStorage.setItem('slapp-config', JSON.stringify(config));
+}
+
+let config = loadConfig();
 
 const ZONES = [
   { lat: 59.356, lng: 18.130, radius: 800, lines: ['206', '21', '80'] },
@@ -293,7 +312,7 @@ async function refreshRoute() {
     const html = connections.map(renderConnection).join('');
     routeCardEl.innerHTML = `
       <div class="route-card">
-        <div class="route-header">Åsögatan 122 → Larsbergsvägen 27</div>
+        <div class="route-header">${esc(config.route.origin)} → ${esc(config.route.destination)}</div>
         ${html}
       </div>`;
   } catch (err) {
@@ -353,7 +372,7 @@ function renderDeparture(dep) {
     </div>`;
 }
 
-function renderLine({ line, departures }, dimmed) {
+function renderLine({ line, departures }, dimmed, index) {
   const rows = departures.length
     ? departures.map(renderDeparture).join('')
     : '<div class="no-departures">Inga avgångar</div>';
@@ -363,6 +382,7 @@ function renderLine({ line, departures }, dimmed) {
       <div class="stop-header" style="background:${line.color}">
         <span class="line-badge">${esc(line.name)}</span>
         ${line.url ? `<a href="${line.url}" target="_blank" class="timetable-link">(PDF)</a>` : ''}
+        <button class="remove-line" data-index="${index}">−</button>
       </div>
       ${rows}
     </section>`;
@@ -399,6 +419,73 @@ function updateGPS() {
   );
 }
 
+/* ---- Add line discovery ---- */
+
+const MODE_COLORS = {
+  BUS: '#1e6bc9',
+  METRO: '#e32d22',
+  TRAM: '#7b4fa0',
+  SHIP: '#00a4b7',
+  TRAIN: '#f47d30',
+};
+
+async function addLineFlow() {
+  const lineNumber = prompt('Linjenummer?');
+  if (!lineNumber) return;
+
+  const stopName = prompt('Hållplats?');
+  if (!stopName) return;
+
+  try {
+    // Resolve stop
+    const stopRes = await fetch(
+      `https://journeyplanner.integration.sl.se/v2/stop-finder?name_sf=${encodeURIComponent(stopName)}&type_sf=any&any_obj_filter_sf=2`
+    );
+    if (!stopRes.ok) { alert('Kunde inte söka hållplats.'); return; }
+    const stopData = await stopRes.json();
+
+    const locations = stopData.locations || [];
+    if (!locations.length) { alert('Hittade ingen hållplats.'); return; }
+
+    const location = locations[0];
+    const stopId = location.properties?.stopId;
+    if (!stopId) { alert('Kunde inte hitta stopp-ID.'); return; }
+
+    // Extract numeric site ID
+    const siteId = parseInt(stopId, 10);
+    if (isNaN(siteId)) { alert('Ogiltigt stopp-ID.'); return; }
+
+    // Fetch departures to verify line exists
+    const depRes = await fetch(`${API_BASE}/${siteId}/departures`);
+    if (!depRes.ok) { alert('Kunde inte hämta avgångar.'); return; }
+    const depData = await depRes.json();
+
+    const lineId = parseInt(lineNumber, 10);
+    const matching = (depData.departures || []).find(
+      (d) => d.line?.id === lineId
+    );
+
+    if (!matching) { alert(`Linje ${lineNumber} hittades inte vid denna hållplats.`); return; }
+
+    const transportMode = matching.line?.transport_mode || 'BUS';
+    const color = MODE_COLORS[transportMode] || '#888';
+    const resolvedStopName = location.name || stopName;
+
+    config.lines.push({
+      name: lineNumber,
+      color,
+      sources: [
+        { id: siteId, lines: [lineId], stop: resolvedStopName },
+      ],
+    });
+    saveConfig(config);
+    refresh();
+  } catch (err) {
+    console.error('Add line failed:', err);
+    alert('Något gick fel.');
+  }
+}
+
 /* ---- Timestamp ---- */
 
 function updateTimestamp() {
@@ -420,21 +507,48 @@ async function refresh() {
   const relevant = getRelevantLines();
   const [, ...lineResults] = await Promise.allSettled([
     refreshRoute(),
-    ...LINES.map(fetchLine),
+    ...config.lines.map(fetchLine),
   ]);
   const html = lineResults.map((result, i) => {
-    const dimmed = relevant !== null && !relevant.includes(LINES[i].name);
+    const dimmed = relevant !== null && !relevant.includes(config.lines[i].name);
     if (result.status === 'fulfilled') {
-      return renderLine(result.value, dimmed);
+      return renderLine(result.value, dimmed, i);
     }
-    console.error(`Failed to fetch ${LINES[i].name}:`, result.reason);
+    console.error(`Failed to fetch ${config.lines[i].name}:`, result.reason);
     return `
       <section class="stop-section${dimmed ? ' dimmed' : ''}">
-        <div class="stop-header"><span class="line-badge" style="background:${LINES[i].color}">${esc(LINES[i].name)}</span></div>
+        <div class="stop-header"><span class="line-badge" style="background:${config.lines[i].color}">${esc(config.lines[i].name)}</span></div>
         <div class="no-departures">Kunde inte hämta avgångar</div>
       </section>`;
   });
+
+  // Add the "+" button section
+  html.push(`
+    <section class="stop-section add-line-section">
+      <div class="stop-header add-line-header">
+        <button class="add-line">+</button>
+      </div>
+    </section>`);
+
   departuresEl.innerHTML = html.join('');
+
+  // Attach remove-line handlers
+  departuresEl.querySelectorAll('.remove-line').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.index, 10);
+      config.lines.splice(idx, 1);
+      saveConfig(config);
+      refresh();
+    });
+  });
+
+  // Attach add-line handler
+  const addBtn = departuresEl.querySelector('.add-line');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => addLineFlow());
+  }
+
   updateTimestamp();
 }
 

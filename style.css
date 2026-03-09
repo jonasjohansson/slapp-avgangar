@@ -214,6 +214,31 @@ main {
   font-size: 0.7rem;
 }
 
+.remove-line {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.add-line-header {
+  justify-content: center;
+}
+
+.add-line {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 4px 16px;
+  line-height: 1;
+}
+
 .stop-section.dimmed {
   opacity: 0.35;
   transition: opacity 0.3s ease;
