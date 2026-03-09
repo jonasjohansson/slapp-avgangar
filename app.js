@@ -68,21 +68,12 @@ function esc(str) {
 function pad(n) { return String(n).padStart(2, '0'); }
 
 const DESTINATION_NAMES = {
-  'Högsätra Larsberg': 'Till Larsberg',
-  'Gåshaga brygga': 'Till Gåshaga',
-  'Ropsten': 'Till Ropsten',
-  'Nacka Strand': 'Till Nacka Strand',
-  'Nybroplan': 'Till Nybroplan',
-  'Alvik': 'Till Alvik',
-  'Åkeshov': 'Till Åkeshov',
-  'Hässelby strand': 'Till Hässelby strand',
-  'Farsta strand': 'Till Farsta strand',
-  'Skarpnäck': 'Till Skarpnäck',
-  'Hagsätra': 'Till Hagsätra',
+  'Högsätra Larsberg': 'Larsberg',
+  'Gåshaga brygga': 'Gåshaga',
 };
 
 function cleanDestination(name) {
-  return DESTINATION_NAMES[name] || 'Till ' + name;
+  return DESTINATION_NAMES[name] || name;
 }
 
 /* ---- Journey planner ---- */
