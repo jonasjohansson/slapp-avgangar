@@ -69,8 +69,8 @@ function pad(n) { return String(n).padStart(2, '0'); }
 
 function toLocalTime(isoStr) {
   if (!isoStr) return '';
-  // API returns times without timezone — they're in UTC
-  const d = new Date(isoStr + 'Z');
+  const d = new Date(isoStr);
+  if (isNaN(d)) return '';
   return d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm' });
 }
 
@@ -115,7 +115,7 @@ async function fetchBikeBoatRoutes() {
 
   const now = new Date();
   return boats.slice(0, 2).map((boat) => {
-    const scheduled = new Date(boat.scheduled + 'Z');
+    const scheduled = new Date(boat.scheduled);
     const leaveHome = new Date(scheduled.getTime() - BIKE_ROUTE.bikeToBoat * 60000);
     const arrSaltsjoquvarn = new Date(scheduled.getTime() + BIKE_ROUTE.boatTravelTime * 60000);
     const arrWork = new Date(arrSaltsjoquvarn.getTime() + BIKE_ROUTE.bikeFromBoat * 60000);
