@@ -1,29 +1,17 @@
 /* ---- Config ---- */
 
+const EMPTY_LINE = { lineId: null, lineName: null, color: '#555', url: null, from: null };
+
 const DEFAULT_LINES = [
-  {
-    lineId: 206, lineName: '206', color: '#1e6bc9',
-    url: 'https://kund.printhuset-sthlm.se/sl/v206.pdf',
-    from: { siteId: 2070, name: 'Larsberg' },
-    to: { siteId: 9220, name: 'Ropsten' },
-  },
-  {
-    lineId: 21, lineName: '21', color: '#7b4fa0',
-    url: 'https://kund.printhuset-sthlm.se/sl/v21.pdf',
-    from: { siteId: 9249, name: 'Larsberg' },
-    to: null,
-  },
-  {
-    lineId: 80, lineName: '80', color: '#00a4b7',
-    url: 'https://kund.printhuset-sthlm.se/sl/v80.pdf',
-    from: { siteId: 9255, name: 'Dalénum' },
-    to: { siteId: 1442, name: 'Saltsjöqvarn' },
-  },
+  { ...EMPTY_LINE },
+  { ...EMPTY_LINE },
+  { ...EMPTY_LINE },
+  { ...EMPTY_LINE },
 ];
 
 const DEFAULT_ROUTE = {
-  origin: 'Åsögatan 122',
-  destination: 'Larsbergsvägen 27',
+  origin: '',
+  destination: '',
 };
 
 function loadConfig() {
@@ -43,7 +31,7 @@ let config = loadConfig();
 const JP_BASE = 'https://journeyplanner.integration.sl.se/v2';
 
 const API_BASE = 'https://transport.integration.sl.se/v1/sites';
-const MAX_DEPARTURES = 8;
+const MAX_DEPARTURES = 6;
 const MAX_MINUTES = 60;
 const REFRESH_INTERVAL = 30000;
 
@@ -70,7 +58,8 @@ const DESTINATION_NAMES = {
 };
 
 function cleanDestination(name) {
-  return DESTINATION_NAMES[name] || name;
+  if (DESTINATION_NAMES[name]) return DESTINATION_NAMES[name];
+  return name.replace(/^(Stockholm|Lidingö|Nacka|Solna|Sundbyberg|Danderyd),\s*/i, '');
 }
 
 /* ---- Fetch all SL lines (once) ---- */
@@ -80,7 +69,17 @@ async function fetchAllLines() {
     const res = await fetch('https://transport.integration.sl.se/v1/lines?transport_authority_id=1');
     if (!res.ok) return;
     const data = await res.json();
-    allSLLines = data || [];
+    // API returns { metro: [...], tram: [...], bus: [...], ... } — flatten into one array
+    const modeMap = { metro: 'METRO', tram: 'TRAM', bus: 'BUS', ship: 'SHIP', train: 'TRAIN' };
+    const lines = [];
+    for (const [key, arr] of Object.entries(data)) {
+      if (!Array.isArray(arr)) continue;
+      const mode = modeMap[key] || key.toUpperCase();
+      for (const line of arr) {
+        lines.push({ ...line, transport_mode: line.transport_mode || mode });
+      }
+    }
+    allSLLines = lines;
   } catch (e) {
     console.error('Failed to fetch SL lines:', e);
   }
@@ -182,39 +181,138 @@ function renderTrip(journey) {
 }
 
 async function refreshRoute() {
-  try {
-    const journeys = await fetchTrips();
-    if (!journeys.length) {
-      routeCardEl.innerHTML = '';
-      return;
-    }
-    const html = journeys.map(renderTrip).join('');
-    routeCardEl.innerHTML = `
-      <div class="route-card">
-        <div class="route-header">
-          <span id="route-header-text">${esc(config.route.origin)} → ${esc(config.route.destination)}</span>
-        </div>
-        ${html}
-      </div>`;
+  const { origin, destination } = config.route;
+  const originLabel = origin || 'Från';
+  const destLabel = destination || 'Till';
+  const hasRoute = origin && destination;
 
-    // Make route header clickable to edit addresses
-    document.getElementById('route-header-text')?.addEventListener('click', editRoute);
-  } catch (err) {
-    console.error('Failed to fetch trips:', err);
-    routeCardEl.innerHTML = '';
+  let tripsHtml = '';
+  if (hasRoute) {
+    try {
+      const journeys = await fetchTrips();
+      const now = new Date();
+      const sorted = journeys
+        .map((j) => {
+          const legs = j.legs || [];
+          const dep = new Date(legs[0]?.origin?.departureTimePlanned);
+          const arr = new Date(legs[legs.length - 1]?.destination?.arrivalTimePlanned);
+          return { journey: j, dep, duration: arr - dep };
+        })
+        .filter((x) => x.dep >= now)
+        .sort((a, b) => a.duration - b.duration)
+        .slice(0, 3)
+        .map((x) => x.journey);
+      tripsHtml = sorted.length
+        ? sorted.map(renderTrip).join('')
+        : '<div class="no-departures">Inga resor hittades</div>';
+    } catch (err) {
+      console.error('Failed to fetch trips:', err);
+    }
   }
+
+  routeCardEl.innerHTML = `
+    <div class="route-card">
+      <div class="stop-header" style="background:#555">
+        <span class="route-pick" data-field="origin">${esc(originLabel)}</span>
+        <span class="route-swap" id="route-swap">⇄</span>
+        <span class="route-pick" data-field="destination">${esc(destLabel)}</span>
+        ${hasRoute ? `<span class="line-clear" id="route-clear">&times;</span>` : ''}
+      </div>
+      ${tripsHtml}
+    </div>`;
+
+  routeCardEl.querySelectorAll('.route-pick').forEach((el) => {
+    el.addEventListener('click', () => {
+      const field = el.dataset.field;
+      const current = config.route[field] || '';
+      showAddressSearch(field === 'origin' ? 'Från?' : 'Till?', current, (val) => {
+        config.route[field] = val;
+        saveConfig(config);
+        refresh();
+      });
+    });
+  });
+
+  document.getElementById('route-swap')?.addEventListener('click', () => {
+    const tmp = config.route.origin;
+    config.route.origin = config.route.destination;
+    config.route.destination = tmp;
+    saveConfig(config);
+    refresh();
+  });
+
+  document.getElementById('route-clear')?.addEventListener('click', () => {
+    config.route = { origin: '', destination: '' };
+    saveConfig(config);
+    refresh();
+  });
 }
 
-function editRoute() {
-  const newOrigin = prompt('Från?', config.route.origin);
-  if (newOrigin === null) return;
-  const newDest = prompt('Till?', config.route.destination);
-  if (newDest === null) return;
+function showAddressSearch(placeholder, current, onSelect) {
+  const overlay = document.createElement('div');
+  overlay.className = 'search-overlay';
 
-  config.route.origin = newOrigin;
-  config.route.destination = newDest;
-  saveConfig(config);
-  refresh();
+  const box = document.createElement('div');
+  box.className = 'search-box';
+
+  const input = document.createElement('input');
+  input.className = 'search-input';
+  input.type = 'text';
+  input.placeholder = placeholder;
+  input.value = current || '';
+  input.autocomplete = 'off';
+
+  const results = document.createElement('div');
+  results.className = 'search-results';
+
+  box.appendChild(input);
+  box.appendChild(results);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  input.focus();
+  input.select();
+
+  let timer = null;
+
+  function close() {
+    if (timer) clearTimeout(timer);
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+
+  function onKey(e) {
+    if (e.key === 'Escape') close();
+  }
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  input.addEventListener('input', () => {
+    if (timer) clearTimeout(timer);
+    const query = input.value.trim();
+    if (!query) { results.innerHTML = ''; return; }
+    timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${JP_BASE}/stop-finder?name_sf=${encodeURIComponent(query)}&type_sf=any&any_obj_filter_sf=0`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const locations = data.locations || [];
+        results.innerHTML = locations.slice(0, 8).map((loc) =>
+          `<div class="search-result" data-name="${esc(loc.name)}">${esc(loc.name)}</div>`
+        ).join('');
+        results.querySelectorAll('.search-result').forEach((el) => {
+          el.addEventListener('click', () => {
+            onSelect(el.dataset.name);
+            close();
+          });
+        });
+      } catch (e) {
+        console.error('Address search failed:', e);
+      }
+    }, 300);
+  });
 }
 
 /* ---- Departures ---- */
@@ -252,31 +350,53 @@ async function fetchSiteDepartures(siteId, lineId, stopName, applyDestOverride) 
 }
 
 async function fetchLine(line) {
-  const fetches = [];
-  // Is this one of the default lines? (for dest override logic)
-  const isDefault = DEFAULT_LINES.some((dl) => dl.lineId === line.lineId);
+  if (!line.lineId || !line.from) return { line, departures: [] };
 
-  // Fetch from "from" station
-  fetches.push(fetchSiteDepartures(line.from.siteId, line.lineId, line.from.name, isDefault));
+  // Fetch departures from the selected station
+  const fromDeps = await fetchSiteDepartures(line.from.siteId, line.lineId, line.from.name, false);
 
-  // Fetch from "to" station if present
-  if (line.to) {
-    fetches.push(fetchSiteDepartures(line.to.siteId, line.lineId, line.to.name, isDefault));
+  // Auto-detect the other end: find the most common destination
+  let returnDeps = [];
+  if (fromDeps.length) {
+    const destCounts = {};
+    for (const d of fromDeps) {
+      const dest = d.destination;
+      destCounts[dest] = (destCounts[dest] || 0) + 1;
+    }
+    const topDest = Object.entries(destCounts).sort((a, b) => b[1] - a[1])[0][0];
+    // Look up siteId for that destination
+    try {
+      const res = await fetch(
+        `${JP_BASE}/stop-finder?name_sf=${encodeURIComponent(topDest)}&type_sf=any&any_obj_filter_sf=2`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const loc = (data.locations || [])[0];
+        const rawId = parseInt(loc?.properties?.stopId || '', 10);
+        const siteId = rawId > 100000 ? rawId % 100000 : rawId;
+        if (siteId && siteId !== line.from.siteId) {
+          returnDeps = await fetchSiteDepartures(siteId, line.lineId, loc.name, false);
+        }
+      }
+    } catch (e) {
+      // Ignore — just show one direction
+    }
   }
 
-  const results = await Promise.allSettled(fetches);
-  const allDeps = [];
-  for (const r of results) {
-    if (r.status === 'fulfilled') allDeps.push(...r.value);
-  }
+  const allDeps = [...fromDeps, ...returnDeps];
   allDeps.sort((a, b) => minutesUntil(a) - minutesUntil(b));
   return { line, departures: allDeps.slice(0, MAX_DEPARTURES) };
+}
+
+function cleanStopName(name) {
+  return name.replace(/^(Stockholm|Lidingö|Nacka|Solna|Sundbyberg|Danderyd),\s*/i, '');
 }
 
 function renderDeparture(dep) {
   const isNow = dep.display === 'Nu';
   const dest = cleanDestination(dep.destination);
-  const route = dep._stop ? `${dep._stop}–${dest}` : dest;
+  const stop = dep._stop ? cleanStopName(dep._stop) : '';
+  const route = stop ? `${stop}–${dest}` : dest;
   return `
     <div class="departure-row">
       <span class="destination">${esc(route)}</span>
@@ -285,18 +405,45 @@ function renderDeparture(dep) {
 }
 
 function renderLine({ line, departures }, index) {
-  const rows = departures.length
-    ? departures.map(renderDeparture).join('')
-    : '<div class="no-departures">Inga avgångar</div>';
+  const isConfigured = line.lineId && line.from;
+  let rows;
+  if (!isConfigured) {
+    rows = '';
+  } else if (!departures.length) {
+    rows = '<div class="no-departures">Inga avgångar</div>';
+  } else {
+    // Group by direction/destination
+    const grouped = {};
+    for (const dep of departures) {
+      const dest = cleanDestination(dep.destination);
+      if (!grouped[dest]) grouped[dest] = [];
+      grouped[dest].push(dep);
+    }
+    const dirs = Object.keys(grouped);
+    if (dirs.length > 1) {
+      rows = dirs.map((dest) =>
+        `<div class="direction-header">${esc(dest)}</div>` +
+        grouped[dest].map(renderDeparture).join('')
+      ).join('');
+    } else {
+      rows = departures.map(renderDeparture).join('');
+    }
+  }
+
+  const fromName = line.from?.name || 'Välj hållplats';
+  const hasLine = !!line.lineId;
 
   return `
     <section class="stop-section">
       <div class="stop-header" style="background:${line.color}">
-        <span class="line-name" data-index="${index}">${esc(line.lineName)}</span>
-        ${line.url ? `<a href="${line.url}" target="_blank" class="timetable-link">(PDF)</a>` : ''}
-        <span class="header-sep">·</span>
-        <span class="station-pick" data-index="${index}" data-field="from">${esc(line.from.name)}</span>
-        ${line.to ? `<span class="header-sep">·</span><span class="station-pick" data-index="${index}" data-field="to">${esc(line.to.name)}</span>` : ''}
+        ${hasLine
+          ? `<span class="line-name" data-index="${index}">${esc(line.lineName)}</span>
+             ${line.url ? `<a href="${line.url}" target="_blank" class="timetable-link">(PDF)</a>` : ''}
+             <span class="header-sep">·</span>
+             <span class="station-pick" data-index="${index}" data-field="from">${esc(fromName)}</span>
+             <span class="line-clear" data-index="${index}">&times;</span>`
+          : `<input class="line-input" data-index="${index}" type="text" inputmode="numeric" placeholder="Linjenr" maxlength="4" /><span class="line-ok hidden" data-index="${index}">OK</span>`
+        }
       </div>
       ${rows}
     </section>`;
@@ -324,88 +471,16 @@ function updateGPS() {
   );
 }
 
-/* ---- Line selection (native <select> dropdown) ---- */
+/* ---- Line selection (inline input) ---- */
 
-function showLineSelect(index, targetEl) {
-  if (!allSLLines || !allSLLines.length) {
-    alert('Linjer har inte laddats än. Försök igen.');
-    return;
-  }
-
-  // Group lines by transport_mode
-  const grouped = {};
-  for (const mode of TRANSPORT_MODE_ORDER) grouped[mode] = [];
-  for (const line of allSLLines) {
-    const mode = line.transport_mode || 'BUS';
-    if (!grouped[mode]) grouped[mode] = [];
-    grouped[mode].push(line);
-  }
-  // Sort each group by designation
-  for (const mode of Object.keys(grouped)) {
-    grouped[mode].sort((a, b) => {
-      const aNum = parseInt(a.designation, 10);
-      const bNum = parseInt(b.designation, 10);
-      if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
-      return a.designation.localeCompare(b.designation);
-    });
-  }
-
-  const sel = document.createElement('select');
-  sel.className = 'line-select-dropdown';
-  sel.size = 12;
-
-  const modeLabels = { METRO: 'Tunnelbana', TRAM: 'Spårvagn', BUS: 'Buss', SHIP: 'Båt', TRAIN: 'Tåg' };
-
-  for (const mode of TRANSPORT_MODE_ORDER) {
-    if (!grouped[mode] || !grouped[mode].length) continue;
-    const optgroup = document.createElement('optgroup');
-    optgroup.label = modeLabels[mode] || mode;
-    for (const line of grouped[mode]) {
-      const opt = document.createElement('option');
-      opt.value = JSON.stringify({ id: line.id, designation: line.designation, mode: line.transport_mode });
-      opt.textContent = `${line.designation}${line.group_of_lines ? ' – ' + line.group_of_lines : ''}`;
-      opt.selected = line.id === config.lines[index].lineId;
-      optgroup.appendChild(opt);
-    }
-    sel.appendChild(optgroup);
-  }
-
-  // Position over the target element
-  const rect = targetEl.getBoundingClientRect();
-  sel.style.position = 'fixed';
-  sel.style.left = rect.left + 'px';
-  sel.style.top = rect.bottom + 'px';
-  sel.style.zIndex = '200';
-  sel.style.background = '#1a1a2e';
-  sel.style.color = '#fff';
-  sel.style.border = '1px solid rgba(255,255,255,0.2)';
-  sel.style.borderRadius = '8px';
-  sel.style.padding = '4px';
-  sel.style.fontSize = '0.9rem';
-  sel.style.minWidth = '200px';
-  sel.style.maxHeight = '300px';
-  sel.style.overflowY = 'auto';
-
-  function cleanup() {
-    sel.remove();
-  }
-
-  sel.addEventListener('change', () => {
-    const val = JSON.parse(sel.value);
-    const lineConfig = config.lines[index];
-    lineConfig.lineId = val.id;
-    lineConfig.lineName = val.designation;
-    lineConfig.color = TRANSPORT_MODE_COLORS[val.mode] || '#888';
-    lineConfig.url = `https://kund.printhuset-sthlm.se/sl/v${val.designation}.pdf`;
-    saveConfig(config);
-    cleanup();
-    refresh();
-  });
-
-  sel.addEventListener('blur', cleanup);
-
-  document.body.appendChild(sel);
-  sel.focus();
+function applyLineMatch(index, match) {
+  const lineConfig = config.lines[index];
+  lineConfig.lineId = match.id;
+  lineConfig.lineName = match.designation;
+  lineConfig.color = TRANSPORT_MODE_COLORS[match.transport_mode] || '#888';
+  lineConfig.url = `https://kund.printhuset-sthlm.se/sl/v${match.designation}.pdf`;
+  saveConfig(config);
+  refresh();
 }
 
 /* ---- Station selection (search modal) ---- */
@@ -478,30 +553,13 @@ function showStationSearch(index, field) {
           el.addEventListener('click', async () => {
             const rawId = el.dataset.stopId;
             const name = el.dataset.name;
-            const siteId = parseInt(rawId, 10);
-            if (isNaN(siteId)) {
+            // Stop-finder returns long IDs (e.g. 18009249), departures API uses short (9249)
+            const longId = parseInt(rawId, 10);
+            if (isNaN(longId)) {
               alert('Ogiltigt stopp-ID.');
               return;
             }
-
-            // Verify line serves this station
-            try {
-              const depRes = await fetch(`${API_BASE}/${siteId}/departures`);
-              if (!depRes.ok) {
-                alert('Kunde inte hämta avgångar för denna hållplats.');
-                return;
-              }
-              const depData = await depRes.json();
-              const lineId = config.lines[index].lineId;
-              const found = (depData.departures || []).some((d) => d.line?.id === lineId);
-              if (!found) {
-                alert(`Linje ${config.lines[index].lineName} hittades inte vid ${name}.`);
-                return;
-              }
-            } catch (e) {
-              alert('Kunde inte verifiera hållplats.');
-              return;
-            }
+            const siteId = longId > 100000 ? longId % 100000 : longId;
 
             // Update config
             config.lines[index][field] = { siteId, name };
@@ -557,20 +615,72 @@ async function refresh() {
 
   departuresEl.innerHTML = html.join('');
 
-  // Attach line-name click handlers
+  // Attach line-name click handlers (re-enter line number)
   departuresEl.querySelectorAll('.line-name').forEach((el) => {
-    el.addEventListener('click', (e) => {
+    el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.index, 10);
-      showLineSelect(idx, el);
+      // Reset line to show input again
+      config.lines[idx] = { ...EMPTY_LINE };
+      saveConfig(config);
+      refresh();
+    });
+  });
+
+  // Click header to focus input
+  departuresEl.querySelectorAll('.stop-header').forEach((header) => {
+    const input = header.querySelector('.line-input');
+    if (!input) return;
+    header.style.cursor = 'text';
+    header.addEventListener('click', (e) => {
+      if (e.target !== input && !e.target.classList.contains('line-ok')) input.focus();
+    });
+  });
+
+  // Show OK button when typing line number
+  departuresEl.querySelectorAll('.line-input').forEach((input) => {
+    const idx = input.dataset.index;
+    const btn = departuresEl.querySelector(`.line-ok[data-index="${idx}"]`);
+    input.addEventListener('input', () => {
+      btn?.classList.toggle('hidden', !input.value.trim());
+    });
+  });
+
+  // Attach line-input OK handlers
+  departuresEl.querySelectorAll('.line-ok').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.index, 10);
+      const input = departuresEl.querySelector(`.line-input[data-index="${idx}"]`);
+      const val = input?.value.trim();
+      if (!val || !allSLLines) return;
+      const match = allSLLines.find((l) => l.designation === val);
+      if (!match) return;
+      const alreadyUsed = config.lines.some((l, i) => i !== idx && l.lineId === match.id);
+      if (alreadyUsed) {
+        alert(`Linje ${val} används redan.`);
+        return;
+      }
+      applyLineMatch(idx, match);
     });
   });
 
   // Attach station-pick click handlers
   departuresEl.querySelectorAll('.station-pick').forEach((el) => {
-    el.addEventListener('click', (e) => {
+    el.addEventListener('click', () => {
       const idx = parseInt(el.dataset.index, 10);
       const field = el.dataset.field;
       showStationSearch(idx, field);
+    });
+  });
+
+
+
+  // Attach clear button handlers
+  departuresEl.querySelectorAll('.line-clear').forEach((el) => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.index, 10);
+      config.lines[idx] = { ...EMPTY_LINE };
+      saveConfig(config);
+      refresh();
     });
   });
 

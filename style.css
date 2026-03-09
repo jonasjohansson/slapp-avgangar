@@ -1,3 +1,24 @@
+@font-face {
+  font-family: 'SL Gothic';
+  src: url('fonts/slgothictext2-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'SL Gothic';
+  src: url('fonts/slgothictext2-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'SL Gothic Display';
+  src: url('fonts/slgothicdisplay-bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: swap;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -9,7 +30,7 @@ body {
   height: 100%;
   background: #0a0a1a;
   color: #e8e8f0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'SL Gothic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
@@ -112,6 +133,14 @@ main {
   font-weight: 700;
 }
 
+.direction-header {
+  padding: 6px 14px 2px;
+  font-size: 0.7rem;
+  color: #6b6b80;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .no-departures {
   padding: 12px 14px;
   color: #6b6b80;
@@ -129,7 +158,7 @@ main {
 #route-card {
   max-width: 500px;
   margin: 0 auto;
-  padding: 16px 16px 0;
+  padding: 0 16px;
 }
 
 .route-card {
@@ -221,7 +250,43 @@ main {
 /* Line header elements */
 .line-name {
   cursor: pointer;
-  font-weight: bold;
+  font-family: 'SL Gothic Display', 'SL Gothic', sans-serif;
+  font-weight: 700;
+}
+
+.line-input {
+  background: none;
+  border: none;
+  color: #fff;
+  font-family: 'SL Gothic Display', 'SL Gothic', sans-serif;
+  font-weight: 700;
+  font-size: inherit;
+  width: 100%;
+  outline: none;
+  padding: 0;
+}
+
+.line-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.line-ok {
+  cursor: pointer;
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0.6;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+}
+
+.line-ok:hover {
+  opacity: 1;
+}
+
+.line-ok.hidden {
+  display: none;
 }
 
 .station-pick {
@@ -235,10 +300,55 @@ main {
   text-decoration: underline;
 }
 
+.station-add {
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: 0.85rem;
+  margin-left: 4px;
+}
+
+.station-add:hover {
+  opacity: 1;
+}
+
 .header-sep {
   opacity: 0.4;
   margin: 0 4px;
   font-size: 0.8rem;
+}
+
+.route-pick {
+  cursor: pointer;
+  opacity: 0.8;
+  font-size: 0.85rem;
+}
+
+.route-pick:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.route-swap {
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 0.85rem;
+  padding: 0 2px;
+}
+
+.route-swap:hover {
+  opacity: 1;
+}
+
+.line-clear {
+  margin-left: auto;
+  cursor: pointer;
+  opacity: 0.4;
+  font-size: 1rem;
+  padding: 0 4px;
+}
+
+.line-clear:hover {
+  opacity: 1;
 }
 
 /* Search modal */
