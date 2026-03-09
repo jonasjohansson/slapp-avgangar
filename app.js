@@ -218,8 +218,8 @@ async function refreshRoute() {
     }));
 
     routeCardEl.innerHTML =
-      buildRouteCard('🏠 → 💼 ' + esc(ROUTE.destination), toWorkRoutes) +
-      buildRouteCard('💼 → 🏠 ' + esc(ROUTE.origin), toHomeRoutes);
+      buildRouteCard('Larsbergsvägen 27 → Åsögatan 122', toWorkRoutes) +
+      buildRouteCard('Åsögatan 122 → Larsbergsvägen 27', toHomeRoutes);
   } catch (err) {
     console.error('Failed to fetch routes:', err);
     routeCardEl.innerHTML = '';
