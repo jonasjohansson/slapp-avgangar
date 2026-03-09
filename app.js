@@ -90,7 +90,7 @@ async function fetchTrips() {
     name_origin: origin,
     type_destination: 'any',
     name_destination: destination,
-    calc_number_of_trips: '6',
+    calc_number_of_trips: '5',
   });
 
   const res = await fetch(`${JP_BASE}/trips?${params}`);
