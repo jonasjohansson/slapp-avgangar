@@ -1,32 +1,23 @@
 /* ---- Config ---- */
 
-// Lines: each is a card showing departures for one line from one or more stops
 const DEFAULT_LINES = [
   {
-    name: '206',
-    color: '#1e6bc9',
+    lineId: 206, lineName: '206', color: '#1e6bc9',
     url: 'https://kund.printhuset-sthlm.se/sl/v206.pdf',
-    sources: [
-      { id: 2070, lines: [206], stop: 'Larsberg' },
-      { id: 9220, lines: [206], directions: [1], stop: 'Ropsten' },
-    ],
+    from: { siteId: 2070, name: 'Larsberg' },
+    to: { siteId: 9220, name: 'Ropsten' },
   },
   {
-    name: '21',
-    color: '#7b4fa0',
+    lineId: 21, lineName: '21', color: '#7b4fa0',
     url: 'https://kund.printhuset-sthlm.se/sl/v21.pdf',
-    sources: [
-      { id: 9249, lines: [21], directions: [2], stop: 'Larsberg', dest: 'Ropsten' },
-    ],
+    from: { siteId: 9249, name: 'Larsberg' },
+    to: null,
   },
   {
-    name: '80',
-    color: '#00a4b7',
+    lineId: 80, lineName: '80', color: '#00a4b7',
     url: 'https://kund.printhuset-sthlm.se/sl/v80.pdf',
-    sources: [
-      { id: 9255, lines: [80], directions: [2], stop: 'Dalénum', dest: 'Nacka Strand' },
-      { id: 1442, lines: [80], directions: [1], stop: 'Saltsjöqvarn' },
-    ],
+    from: { siteId: 9255, name: 'Dalénum' },
+    to: { siteId: 1442, name: 'Saltsjöqvarn' },
   },
 ];
 
@@ -43,16 +34,11 @@ function loadConfig() {
   return { lines: DEFAULT_LINES, route: DEFAULT_ROUTE };
 }
 
-function saveConfig(config) {
-  localStorage.setItem('slapp-config', JSON.stringify(config));
+function saveConfig(cfg) {
+  localStorage.setItem('slapp-config', JSON.stringify(cfg));
 }
 
 let config = loadConfig();
-
-const ZONES = [
-  { lat: 59.356, lng: 18.130, radius: 800, lines: ['206', '21', '80'] },
-  { lat: 59.320, lng: 18.100, radius: 500, lines: ['80'] },
-];
 
 // Smart connections: walk → green line Medborgarplatsen → Slussen → red 13 → Ropsten → 206/21
 // Alternative: walk → bus 76 Medborgarplatsen → Ropsten → 206/21
@@ -93,6 +79,7 @@ const routeCardEl = document.getElementById('route-card');
 const updatedEl = document.getElementById('updated');
 
 let userPosition = null;
+let allSLLines = null; // fetched once on load
 
 function esc(str) {
   const d = document.createElement('div');
@@ -112,6 +99,29 @@ const DESTINATION_NAMES = {
 function cleanDestination(name) {
   return DESTINATION_NAMES[name] || name;
 }
+
+/* ---- Fetch all SL lines (once) ---- */
+
+async function fetchAllLines() {
+  try {
+    const res = await fetch('https://transport.integration.sl.se/v1/lines?transport_authority_id=1');
+    if (!res.ok) return;
+    const data = await res.json();
+    allSLLines = data || [];
+  } catch (e) {
+    console.error('Failed to fetch SL lines:', e);
+  }
+}
+
+const TRANSPORT_MODE_COLORS = {
+  BUS: '#1e6bc9',
+  METRO: '#e32d22',
+  TRAM: '#7b4fa0',
+  SHIP: '#00a4b7',
+  TRAIN: '#f47d30',
+};
+
+const TRANSPORT_MODE_ORDER = ['METRO', 'TRAM', 'BUS', 'SHIP', 'TRAIN'];
 
 /* ---- Smart connections: Åsögatan → Slussen → Ropsten → Lidingö ---- */
 
@@ -338,25 +348,41 @@ function minutesUntil(dep) {
   return 0;
 }
 
-async function fetchSourceDepartures(source) {
-  const res = await fetch(`${API_BASE}/${source.id}/departures`);
+async function fetchSiteDepartures(siteId, lineId, stopName, applyDestOverride) {
+  const res = await fetch(`${API_BASE}/${siteId}/departures`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return (data.departures || []).filter((dep) =>
     dep.journey?.state !== 'CANCELLED' && dep.state !== 'CANCELLED' &&
-    source.lines.includes(dep.line?.id) &&
-    (!source.directions || source.directions.includes(dep.direction_code)) &&
+    dep.line?.id === lineId &&
     minutesUntil(dep) <= MAX_MINUTES
-  ).map((dep) => ({ ...dep, _stop: source.stop, ...(source.dest && { destination: source.dest }) }));
+  ).map((dep) => {
+    const result = { ...dep, _stop: stopName };
+    if (applyDestOverride && DESTINATION_NAMES[dep.destination]) {
+      result.destination = DESTINATION_NAMES[dep.destination];
+    }
+    return result;
+  });
 }
 
 async function fetchLine(line) {
-  const results = await Promise.allSettled(line.sources.map(fetchSourceDepartures));
+  const fetches = [];
+  // Is this one of the default lines? (for dest override logic)
+  const isDefault = DEFAULT_LINES.some((dl) => dl.lineId === line.lineId);
+
+  // Fetch from "from" station
+  fetches.push(fetchSiteDepartures(line.from.siteId, line.lineId, line.from.name, isDefault));
+
+  // Fetch from "to" station if present
+  if (line.to) {
+    fetches.push(fetchSiteDepartures(line.to.siteId, line.lineId, line.to.name, isDefault));
+  }
+
+  const results = await Promise.allSettled(fetches);
   const allDeps = [];
   for (const r of results) {
     if (r.status === 'fulfilled') allDeps.push(...r.value);
   }
-  // Sort by time
   allDeps.sort((a, b) => minutesUntil(a) - minutesUntil(b));
   return { line, departures: allDeps.slice(0, MAX_DEPARTURES) };
 }
@@ -372,17 +398,19 @@ function renderDeparture(dep) {
     </div>`;
 }
 
-function renderLine({ line, departures }, dimmed, index) {
+function renderLine({ line, departures }, index) {
   const rows = departures.length
     ? departures.map(renderDeparture).join('')
     : '<div class="no-departures">Inga avgångar</div>';
 
   return `
-    <section class="stop-section${dimmed ? ' dimmed' : ''}">
+    <section class="stop-section">
       <div class="stop-header" style="background:${line.color}">
-        <span class="line-badge">${esc(line.name)}</span>
+        <span class="line-name" data-index="${index}">${esc(line.lineName)}</span>
         ${line.url ? `<a href="${line.url}" target="_blank" class="timetable-link">(PDF)</a>` : ''}
-        <button class="remove-line" data-index="${index}">−</button>
+        <span class="header-sep">·</span>
+        <span class="station-pick" data-index="${index}" data-field="from">${esc(line.from.name)}</span>
+        ${line.to ? `<span class="header-sep">·</span><span class="station-pick" data-index="${index}" data-field="to">${esc(line.to.name)}</span>` : ''}
       </div>
       ${rows}
     </section>`;
@@ -401,15 +429,6 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function getRelevantLines() {
-  if (!userPosition) return null;
-  for (const zone of ZONES) {
-    const dist = distanceMeters(userPosition.lat, userPosition.lng, zone.lat, zone.lng);
-    if (dist <= zone.radius) return zone.lines;
-  }
-  return null;
-}
-
 function updateGPS() {
   if (!navigator.geolocation) return;
   navigator.geolocation.getCurrentPosition(
@@ -419,71 +438,198 @@ function updateGPS() {
   );
 }
 
-/* ---- Add line discovery ---- */
+/* ---- Line selection (native <select> dropdown) ---- */
 
-const MODE_COLORS = {
-  BUS: '#1e6bc9',
-  METRO: '#e32d22',
-  TRAM: '#7b4fa0',
-  SHIP: '#00a4b7',
-  TRAIN: '#f47d30',
-};
-
-async function addLineFlow() {
-  const lineNumber = prompt('Linjenummer?');
-  if (!lineNumber) return;
-
-  const stopName = prompt('Hållplats?');
-  if (!stopName) return;
-
-  try {
-    // Resolve stop
-    const stopRes = await fetch(
-      `https://journeyplanner.integration.sl.se/v2/stop-finder?name_sf=${encodeURIComponent(stopName)}&type_sf=any&any_obj_filter_sf=2`
-    );
-    if (!stopRes.ok) { alert('Kunde inte söka hållplats.'); return; }
-    const stopData = await stopRes.json();
-
-    const locations = stopData.locations || [];
-    if (!locations.length) { alert('Hittade ingen hållplats.'); return; }
-
-    const location = locations[0];
-    const stopId = location.properties?.stopId;
-    if (!stopId) { alert('Kunde inte hitta stopp-ID.'); return; }
-
-    // Extract numeric site ID
-    const siteId = parseInt(stopId, 10);
-    if (isNaN(siteId)) { alert('Ogiltigt stopp-ID.'); return; }
-
-    // Fetch departures to verify line exists
-    const depRes = await fetch(`${API_BASE}/${siteId}/departures`);
-    if (!depRes.ok) { alert('Kunde inte hämta avgångar.'); return; }
-    const depData = await depRes.json();
-
-    const lineId = parseInt(lineNumber, 10);
-    const matching = (depData.departures || []).find(
-      (d) => d.line?.id === lineId
-    );
-
-    if (!matching) { alert(`Linje ${lineNumber} hittades inte vid denna hållplats.`); return; }
-
-    const transportMode = matching.line?.transport_mode || 'BUS';
-    const color = MODE_COLORS[transportMode] || '#888';
-    const resolvedStopName = location.name || stopName;
-
-    config.lines.push({
-      name: lineNumber,
-      color,
-      sources: [
-        { id: siteId, lines: [lineId], stop: resolvedStopName },
-      ],
-    });
-    saveConfig(config);
-    refresh();
-  } catch (err) {
-    console.error('Add line failed:', err);
-    alert('Något gick fel.');
+function showLineSelect(index, targetEl) {
+  if (!allSLLines || !allSLLines.length) {
+    alert('Linjer har inte laddats än. Försök igen.');
+    return;
   }
+
+  // Group lines by transport_mode
+  const grouped = {};
+  for (const mode of TRANSPORT_MODE_ORDER) grouped[mode] = [];
+  for (const line of allSLLines) {
+    const mode = line.transport_mode || 'BUS';
+    if (!grouped[mode]) grouped[mode] = [];
+    grouped[mode].push(line);
+  }
+  // Sort each group by designation
+  for (const mode of Object.keys(grouped)) {
+    grouped[mode].sort((a, b) => {
+      const aNum = parseInt(a.designation, 10);
+      const bNum = parseInt(b.designation, 10);
+      if (!isNaN(aNum) && !isNaN(bNum)) return aNum - bNum;
+      return a.designation.localeCompare(b.designation);
+    });
+  }
+
+  const sel = document.createElement('select');
+  sel.className = 'line-select-dropdown';
+  sel.size = 12;
+
+  const modeLabels = { METRO: 'Tunnelbana', TRAM: 'Spårvagn', BUS: 'Buss', SHIP: 'Båt', TRAIN: 'Tåg' };
+
+  for (const mode of TRANSPORT_MODE_ORDER) {
+    if (!grouped[mode] || !grouped[mode].length) continue;
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = modeLabels[mode] || mode;
+    for (const line of grouped[mode]) {
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ id: line.id, designation: line.designation, mode: line.transport_mode });
+      opt.textContent = `${line.designation}${line.group_of_lines ? ' – ' + line.group_of_lines : ''}`;
+      opt.selected = line.id === config.lines[index].lineId;
+      optgroup.appendChild(opt);
+    }
+    sel.appendChild(optgroup);
+  }
+
+  // Position over the target element
+  const rect = targetEl.getBoundingClientRect();
+  sel.style.position = 'fixed';
+  sel.style.left = rect.left + 'px';
+  sel.style.top = rect.bottom + 'px';
+  sel.style.zIndex = '200';
+  sel.style.background = '#1a1a2e';
+  sel.style.color = '#fff';
+  sel.style.border = '1px solid rgba(255,255,255,0.2)';
+  sel.style.borderRadius = '8px';
+  sel.style.padding = '4px';
+  sel.style.fontSize = '0.9rem';
+  sel.style.minWidth = '200px';
+  sel.style.maxHeight = '300px';
+  sel.style.overflowY = 'auto';
+
+  function cleanup() {
+    sel.remove();
+  }
+
+  sel.addEventListener('change', () => {
+    const val = JSON.parse(sel.value);
+    const lineConfig = config.lines[index];
+    lineConfig.lineId = val.id;
+    lineConfig.lineName = val.designation;
+    lineConfig.color = TRANSPORT_MODE_COLORS[val.mode] || '#888';
+    lineConfig.url = `https://kund.printhuset-sthlm.se/sl/v${val.designation}.pdf`;
+    saveConfig(config);
+    cleanup();
+    refresh();
+  });
+
+  sel.addEventListener('blur', cleanup);
+
+  document.body.appendChild(sel);
+  sel.focus();
+}
+
+/* ---- Station selection (search modal) ---- */
+
+let searchDebounceTimer = null;
+
+function showStationSearch(index, field) {
+  const overlay = document.createElement('div');
+  overlay.className = 'search-overlay';
+
+  const box = document.createElement('div');
+  box.className = 'search-box';
+
+  const input = document.createElement('input');
+  input.className = 'search-input';
+  input.type = 'text';
+  input.placeholder = 'Sök hållplats...';
+  input.autocomplete = 'off';
+
+  const results = document.createElement('div');
+  results.className = 'search-results';
+
+  box.appendChild(input);
+  box.appendChild(results);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  input.focus();
+
+  function close() {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    overlay.remove();
+  }
+
+  // Close on overlay click (but not box click)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+
+  // Close on Escape
+  function onKey(e) {
+    if (e.key === 'Escape') {
+      close();
+      document.removeEventListener('keydown', onKey);
+    }
+  }
+  document.addEventListener('keydown', onKey);
+
+  input.addEventListener('input', () => {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    const query = input.value.trim();
+    if (!query) {
+      results.innerHTML = '';
+      return;
+    }
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://journeyplanner.integration.sl.se/v2/stop-finder?name_sf=${encodeURIComponent(query)}&type_sf=any&any_obj_filter_sf=2`
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const locations = data.locations || [];
+        results.innerHTML = locations.slice(0, 10).map((loc) => {
+          const stopId = loc.properties?.stopId || '';
+          return `<div class="search-result" data-stop-id="${esc(stopId)}" data-name="${esc(loc.name)}">${esc(loc.name)}</div>`;
+        }).join('');
+
+        results.querySelectorAll('.search-result').forEach((el) => {
+          el.addEventListener('click', async () => {
+            const rawId = el.dataset.stopId;
+            const name = el.dataset.name;
+            const siteId = parseInt(rawId, 10);
+            if (isNaN(siteId)) {
+              alert('Ogiltigt stopp-ID.');
+              return;
+            }
+
+            // Verify line serves this station
+            try {
+              const depRes = await fetch(`${API_BASE}/${siteId}/departures`);
+              if (!depRes.ok) {
+                alert('Kunde inte hämta avgångar för denna hållplats.');
+                return;
+              }
+              const depData = await depRes.json();
+              const lineId = config.lines[index].lineId;
+              const found = (depData.departures || []).some((d) => d.line?.id === lineId);
+              if (!found) {
+                alert(`Linje ${config.lines[index].lineName} hittades inte vid ${name}.`);
+                return;
+              }
+            } catch (e) {
+              alert('Kunde inte verifiera hållplats.');
+              return;
+            }
+
+            // Update config
+            config.lines[index][field] = { siteId, name };
+            saveConfig(config);
+            document.removeEventListener('keydown', onKey);
+            close();
+            refresh();
+          });
+        });
+      } catch (e) {
+        console.error('Station search failed:', e);
+      }
+    }, 300);
+  });
 }
 
 /* ---- Timestamp ---- */
@@ -501,53 +647,46 @@ function updateTimestamp() {
 /* ---- Main loop ---- */
 
 updateGPS();
+fetchAllLines();
 
 async function refresh() {
   updateGPS();
-  const relevant = getRelevantLines();
   const [, ...lineResults] = await Promise.allSettled([
     refreshRoute(),
     ...config.lines.map(fetchLine),
   ]);
   const html = lineResults.map((result, i) => {
-    const dimmed = relevant !== null && !relevant.includes(config.lines[i].name);
     if (result.status === 'fulfilled') {
-      return renderLine(result.value, dimmed, i);
+      return renderLine(result.value, i);
     }
-    console.error(`Failed to fetch ${config.lines[i].name}:`, result.reason);
+    console.error(`Failed to fetch ${config.lines[i].lineName}:`, result.reason);
     return `
-      <section class="stop-section${dimmed ? ' dimmed' : ''}">
-        <div class="stop-header"><span class="line-badge" style="background:${config.lines[i].color}">${esc(config.lines[i].name)}</span></div>
+      <section class="stop-section">
+        <div class="stop-header" style="background:${config.lines[i].color}">
+          <span class="line-name">${esc(config.lines[i].lineName)}</span>
+        </div>
         <div class="no-departures">Kunde inte hämta avgångar</div>
       </section>`;
   });
 
-  // Add the "+" button section
-  html.push(`
-    <section class="stop-section add-line-section">
-      <div class="stop-header add-line-header">
-        <button class="add-line">+</button>
-      </div>
-    </section>`);
-
   departuresEl.innerHTML = html.join('');
 
-  // Attach remove-line handlers
-  departuresEl.querySelectorAll('.remove-line').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = parseInt(btn.dataset.index, 10);
-      config.lines.splice(idx, 1);
-      saveConfig(config);
-      refresh();
+  // Attach line-name click handlers
+  departuresEl.querySelectorAll('.line-name').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const idx = parseInt(el.dataset.index, 10);
+      showLineSelect(idx, el);
     });
   });
 
-  // Attach add-line handler
-  const addBtn = departuresEl.querySelector('.add-line');
-  if (addBtn) {
-    addBtn.addEventListener('click', () => addLineFlow());
-  }
+  // Attach station-pick click handlers
+  departuresEl.querySelectorAll('.station-pick').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      const idx = parseInt(el.dataset.index, 10);
+      const field = el.dataset.field;
+      showStationSearch(idx, field);
+    });
+  });
 
   updateTimestamp();
 }

@@ -214,31 +214,80 @@ main {
   font-size: 0.7rem;
 }
 
-.remove-line {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 1.2rem;
+/* Line header elements */
+.line-name {
   cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
+  font-weight: bold;
 }
 
-.add-line-header {
-  justify-content: center;
-}
-
-.add-line {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 1.4rem;
+.station-pick {
   cursor: pointer;
-  padding: 4px 16px;
-  line-height: 1;
+  opacity: 0.8;
+  font-size: 0.8rem;
 }
 
+.station-pick:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.header-sep {
+  opacity: 0.4;
+  margin: 0 4px;
+  font-size: 0.8rem;
+}
+
+/* Search modal */
+.search-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 20vh;
+}
+
+.search-box {
+  width: 90%;
+  max-width: 400px;
+  background: #1a1a2e;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.search-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: #252540;
+  border: none;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.search-results {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.search-result {
+  padding: 12px 16px;
+  color: #ccc;
+  cursor: pointer;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.search-result:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Dimming (kept for GPS) */
 .stop-section.dimmed {
   opacity: 0.35;
   transition: opacity 0.3s ease;
