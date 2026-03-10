@@ -162,6 +162,16 @@ main {
   font-size: 0.85rem;
 }
 
+/* Pulsating urgency animation */
+@keyframes pulse-urgency {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.time-pulse {
+  animation: pulse-urgency 1.5s ease-in-out infinite;
+}
+
 .deviation-banner {
   padding: 6px 14px;
   font-size: 0.75rem;
@@ -455,6 +465,36 @@ main {
     font-size: 0.85rem;
     padding: 3px 8px;
   }
+}
+
+/* Settings bar */
+.settings-bar {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 8px 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: #6b6b80;
+}
+
+.settings-bar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-bar select {
+  background: #141428;
+  color: #e8e8f0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  outline: none;
 }
 
 /* Desktop */

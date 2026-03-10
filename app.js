@@ -18,7 +18,7 @@ function loadConfig() {
     const raw = localStorage.getItem('slapp-config');
     if (raw) return JSON.parse(raw);
   } catch (e) { /* ignore */ }
-  return { lines: DEFAULT_LINES, route: DEFAULT_ROUTE };
+  return { lines: DEFAULT_LINES, route: DEFAULT_ROUTE, bufferMinutes: 0 };
 }
 
 function saveConfig(cfg) {
@@ -377,15 +377,20 @@ function renderDeparture(dep) {
   // Detect delay: expected vs scheduled
   const isDelayed = dep.expected && dep.scheduled && new Date(dep.expected) > new Date(dep.scheduled);
 
-  // Urgency color based on minutes remaining
+  // Urgency color based on effective minutes (accounting for buffer)
+  const buffer = config.bufferMinutes || 0;
+  const effectiveMins = mins - buffer;
   let urgencyColor;
+  let shouldPulse = false;
   if (isNow) {
     urgencyColor = '#22c55e'; // green
-  } else if (mins <= 1) {
+  } else if (effectiveMins <= 1) {
     urgencyColor = '#ef4444'; // red
-  } else if (mins <= 5) {
+    shouldPulse = true;
+  } else if (effectiveMins <= 5) {
     urgencyColor = '#f97316'; // orange
-  } else if (mins <= 10) {
+    shouldPulse = true;
+  } else if (effectiveMins <= 10) {
     urgencyColor = '#eab308'; // yellow
   } else {
     urgencyColor = null;
@@ -394,12 +399,13 @@ function renderDeparture(dep) {
   // Delay overrides urgency color
   const color = isDelayed ? '#f59e0b' : urgencyColor;
   const timeStyle = color ? ` style="color:${color}"` : '';
+  const pulseClass = shouldPulse && !isDelayed ? ' time-pulse' : '';
 
   let timeHtml;
   if (isNow) {
     timeHtml = `<span class="time now">Nu</span><span class="time"${timeStyle}>${depClock}</span>`;
   } else {
-    timeHtml = `<span class="time-min"${timeStyle}>${Math.round(mins)} min</span><span class="time"${timeStyle}>${depClock}</span>`;
+    timeHtml = `<span class="time-min${pulseClass}"${timeStyle}>${Math.round(mins)} min</span><span class="time${pulseClass}"${timeStyle}>${depClock}</span>`;
   }
 
   return `
@@ -726,7 +732,36 @@ async function refresh() {
   });
 
   updateTimestamp();
+  renderSettings();
   refreshing = false;
+}
+
+/* ---- Settings ---- */
+
+function renderSettings() {
+  let settingsEl = document.getElementById('settings-bar');
+  if (!settingsEl) {
+    settingsEl = document.createElement('div');
+    settingsEl.id = 'settings-bar';
+    settingsEl.className = 'settings-bar';
+    document.body.insertBefore(settingsEl, updatedEl);
+  }
+  const current = config.bufferMinutes || 0;
+  settingsEl.innerHTML = `
+    <label>
+      Buffert
+      <select id="buffer-select">
+        <option value="0"${current === 0 ? ' selected' : ''}>0 min</option>
+        <option value="1"${current === 1 ? ' selected' : ''}>1 min</option>
+        <option value="2"${current === 2 ? ' selected' : ''}>2 min</option>
+        <option value="3"${current === 3 ? ' selected' : ''}>3 min</option>
+      </select>
+    </label>`;
+  document.getElementById('buffer-select').addEventListener('change', (e) => {
+    config.bufferMinutes = parseInt(e.target.value, 10);
+    saveConfig(config);
+    refresh();
+  });
 }
 
 refresh();
